@@ -61,3 +61,34 @@ export interface AnalysisResult {
   aiAnalysis: AIAnalysis;
   timestamp: Date;
 }
+
+// Historical Data Types
+export interface HistoricalDataPoint {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface HistoricalData {
+  symbol: string;
+  timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y";
+  data: HistoricalDataPoint[];
+  lastUpdated: Date;
+}
+
+export interface TechnicalIndicators {
+  sma20: number | null;
+  sma50: number | null;
+  ema12: number | null;
+  ema26: number | null;
+  rsi: number | null;
+}
+
+export interface ChartDataPoint extends HistoricalDataPoint {
+  indicators?: TechnicalIndicators;
+  change?: number;
+  changePercent?: number;
+}

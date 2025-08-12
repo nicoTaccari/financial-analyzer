@@ -17,6 +17,9 @@ import {
   StarOff,
 } from "lucide-react";
 
+import { StockChart } from "@/components/charts/StockChart";
+import type { HistoricalData } from "@/types";
+
 export default function Home() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,8 +32,41 @@ export default function Home() {
     "GOOGL",
   ]);
   const [comparison, setComparison] = useState<any[]>([]);
+  const [historicalData, setHistoricalData] = useState<HistoricalData | null>(
+    null
+  );
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState("");
+  const [selectedTimeframe, setSelectedTimeframe] = useState<
+    "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y"
+  >("1Y");
 
-  // Your existing analyze function - keeping it exactly as is
+  const fetchHistoricalData = async (
+    tickerSymbol: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ) => {
+    setChartLoading(true);
+    setChartError("");
+
+    try {
+      const response = await fetch(
+        `/api/historical/${tickerSymbol.toUpperCase()}?timeframe=${timeframe}`
+      );
+      const data = await response.json();
+
+      if (data.success) {
+        setHistoricalData(data.data.data);
+        setSelectedTimeframe(timeframe);
+      } else {
+        setChartError(data.error || "Failed to fetch historical data");
+      }
+    } catch (err) {
+      setChartError("Network error while fetching chart data");
+    } finally {
+      setChartLoading(false);
+    }
+  };
+
   const handleAnalyze = async (tickerSymbol?: string) => {
     const symbolToAnalyze = tickerSymbol || ticker;
     if (!symbolToAnalyze.trim()) return;
@@ -38,18 +74,22 @@ export default function Home() {
     setLoading(true);
     setError("");
     setResult(null);
+    setHistoricalData(null); // Reset chart data
 
     try {
-      const response = await fetch(
-        `/api/analysis/${symbolToAnalyze.toUpperCase()}`
-      );
-      const data = await response.json();
+      // Fetch both analysis and historical data in parallel
+      const [analysisResponse] = await Promise.all([
+        fetch(`/api/analysis/${symbolToAnalyze.toUpperCase()}`),
+        fetchHistoricalData(symbolToAnalyze, selectedTimeframe), // Fetch historical data
+      ]);
 
-      if (data.success) {
-        setResult(data.data);
+      const analysisData = await analysisResponse.json();
+
+      if (analysisData.success) {
+        setResult(analysisData.data);
         setTicker(symbolToAnalyze.toUpperCase());
       } else {
-        setError(data.error || "Analysis failed");
+        setError(analysisData.error || "Analysis failed");
       }
     } catch (err) {
       setError("Network error");
@@ -511,6 +551,7 @@ export default function Home() {
                       name: "Financial Metrics",
                       icon: DollarSign,
                     },
+                    { id: "charts", name: "Price Charts", icon: LineChart },
                     { id: "analysis", name: "AI Analysis", icon: Activity },
                   ].map((tab) => (
                     <button
@@ -660,6 +701,186 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {activeTab === "charts" && (
+                  <div>
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-2xl font-bold text-slate-900 flex items-center space-x-3">
+                        <LineChart className="w-7 h-7" />
+                        <span>Price Charts & Technical Analysis</span>
+                      </h3>
+                      {historicalData && (
+                        <div className="text-sm text-slate-600 bg-slate-100 px-3 py-1 rounded-lg">
+                          {historicalData.data.length} data points
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Chart Component */}
+                    {historicalData ? (
+                      <StockChart
+                        data={historicalData}
+                        loading={chartLoading}
+                        error={chartError}
+                        onTimeframeChange={(timeframe) => {
+                          if (result) {
+                            fetchHistoricalData(result.ticker, timeframe);
+                          }
+                        }}
+                      />
+                    ) : chartLoading ? (
+                      <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+                        <div className="relative">
+                          <div className="animate-spin w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-6"></div>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <LineChart className="w-6 h-6 text-blue-600" />
+                          </div>
+                        </div>
+                        <h3 className="text-2xl font-bold text-slate-900 mb-3">
+                          Loading Chart Data
+                        </h3>
+                        <p className="text-lg text-slate-600 mb-2">
+                          Fetching historical prices...
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          This may take a few seconds
+                        </p>
+                      </div>
+                    ) : chartError ? (
+                      <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-8">
+                        <div className="flex items-start space-x-4">
+                          <div className="p-2 bg-red-100 rounded-lg">
+                            <AlertTriangle className="w-6 h-6 text-red-600" />
+                          </div>
+                          <div className="flex-1">
+                            <h3 className="text-xl font-bold text-red-900 mb-2">
+                              Chart Data Error
+                            </h3>
+                            <p className="text-red-800 text-lg mb-3">
+                              {chartError}
+                            </p>
+                            <button
+                              onClick={() =>
+                                result &&
+                                fetchHistoricalData(
+                                  result.ticker,
+                                  selectedTimeframe
+                                )
+                              }
+                              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors duration-200"
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-12 text-center">
+                        <LineChart className="w-16 h-16 text-slate-400 mx-auto mb-4" />
+                        <h3 className="text-xl font-bold text-slate-700 mb-2">
+                          No Chart Data Available
+                        </h3>
+                        <p className="text-slate-600">
+                          Analyze a stock to see historical price charts
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Quick Chart Actions */}
+                    {historicalData && (
+                      <div className="mt-8 bg-slate-50 rounded-xl p-6">
+                        <h4 className="font-semibold text-slate-900 mb-4">
+                          Quick Analysis
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="bg-white rounded-lg p-4 border border-slate-200">
+                            <div className="text-sm font-medium text-slate-600 mb-1">
+                              Price Movement
+                            </div>
+                            <div
+                              className={`text-lg font-bold ${
+                                historicalData.data[
+                                  historicalData.data.length - 1
+                                ]?.close > historicalData.data[0]?.close
+                                  ? "text-emerald-600"
+                                  : "text-red-600"
+                              }`}
+                            >
+                              {(
+                                ((historicalData.data[
+                                  historicalData.data.length - 1
+                                ]?.close -
+                                  historicalData.data[0]?.close) /
+                                  historicalData.data[0]?.close) *
+                                100
+                              ).toFixed(1)}
+                              %
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {selectedTimeframe} period return
+                            </div>
+                          </div>
+
+                          <div className="bg-white rounded-lg p-4 border border-slate-200">
+                            <div className="text-sm font-medium text-slate-600 mb-1">
+                              Volatility
+                            </div>
+                            <div className="text-lg font-bold text-slate-900">
+                              {(() => {
+                                const returns = historicalData.data
+                                  .slice(1)
+                                  .map((point, i) =>
+                                    Math.log(
+                                      point.close / historicalData.data[i].close
+                                    )
+                                  );
+                                const variance =
+                                  returns.reduce(
+                                    (sum, ret) => sum + ret * ret,
+                                    0
+                                  ) / returns.length;
+                                return (
+                                  Math.sqrt(variance) *
+                                  Math.sqrt(252) *
+                                  100
+                                ).toFixed(1); // Annualized volatility
+                              })()}
+                              %
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              Annualized volatility
+                            </div>
+                          </div>
+
+                          <div className="bg-white rounded-lg p-4 border border-slate-200">
+                            <div className="text-sm font-medium text-slate-600 mb-1">
+                              Trend Strength
+                            </div>
+                            <div className="text-lg font-bold text-blue-600">
+                              {(() => {
+                                const closes = historicalData.data.map(
+                                  (d) => d.close
+                                );
+                                const upDays = closes
+                                  .slice(1)
+                                  .filter(
+                                    (close, i) => close > closes[i]
+                                  ).length;
+                                return Math.round(
+                                  (upDays / (closes.length - 1)) * 100
+                                );
+                              })()}
+                              %
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              Positive days ratio
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

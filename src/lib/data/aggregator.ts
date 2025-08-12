@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { AlphaVantageProvider } from "./providers/alpha-vantage";
 import { MockFinancialProvider } from "./providers/mock-provider";
 import type { StockData, FinancialMetrics } from "@/types";
+import type { HistoricalData } from "@/types";
 
 // Providers en orden de preferencia
 const stockProviders = [
@@ -13,6 +14,73 @@ const metricsProviders = [
   new AlphaVantageProvider(),
   new MockFinancialProvider(), // Yahoo no tiene métricas completas
 ];
+
+export const getCachedHistoricalData = unstable_cache(
+  async (
+    ticker: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ): Promise<{ data: HistoricalData; source: string }> => {
+    console.log(
+      `📈 Fetching fresh historical data for ${ticker} (${timeframe})`
+    );
+
+    const errors: string[] = [];
+
+    for (const provider of stockProviders) {
+      // Only Alpha Vantage supports historical data for now
+      if (provider.name !== "Alpha Vantage") continue;
+
+      try {
+        if ("getHistoricalData" in provider) {
+          const data = await (provider as any).getHistoricalData(
+            ticker,
+            timeframe
+          );
+
+          if (validateHistoricalData(data)) {
+            console.log(
+              `✅ Historical data success with ${provider.name} for ${ticker}`
+            );
+            return { data, source: provider.name };
+          }
+        }
+      } catch (error) {
+        const errorMsg =
+          error instanceof Error ? error.message : "Unknown error";
+        console.warn(
+          `❌ ${provider.name} historical failed for ${ticker}: ${errorMsg}`
+        );
+        errors.push(`${provider.name}: ${errorMsg}`);
+
+        if (errorMsg.includes("rate limit")) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+
+    // Fallback to mock data if all providers fail
+    try {
+      const mockProvider = new MockFinancialProvider();
+      const data = await (mockProvider as any).getHistoricalData(
+        ticker,
+        timeframe
+      );
+      console.log(`✅ Using mock historical data for ${ticker}`);
+      return { data, source: "Mock Provider" };
+    } catch (mockError) {
+      throw new Error(
+        `All historical data providers failed for ${ticker}. Errors: ${errors.join(
+          "; "
+        )}`
+      );
+    }
+  },
+  ["historical-data"],
+  {
+    revalidate: 1800, // 30 minutes for historical data
+    tags: ["historical"],
+  }
+);
 
 // Cache con Next.js
 export const getCachedStockData = unstable_cache(
@@ -124,6 +192,54 @@ export class FinancialDataAggregator {
       },
     };
   }
+
+  static async getHistoricalData(
+    ticker: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ): Promise<HistoricalData> {
+    const result = await getCachedHistoricalData(
+      ticker.toUpperCase(),
+      timeframe
+    );
+    return result.data;
+  }
+
+  static async getHistoricalDataWithSource(
+    ticker: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ) {
+    const result = await getCachedHistoricalData(
+      ticker.toUpperCase(),
+      timeframe
+    );
+    return {
+      data: result.data,
+      source: result.source,
+    };
+  }
+
+  // Enhanced method that includes historical data
+  static async getCompleteAnalysisData(
+    ticker: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ) {
+    const [stockResult, metricsResult, historicalResult] = await Promise.all([
+      getCachedStockData(ticker.toUpperCase()),
+      getCachedFinancialMetrics(ticker.toUpperCase()),
+      getCachedHistoricalData(ticker.toUpperCase(), timeframe),
+    ]);
+
+    return {
+      stockData: stockResult.data,
+      metrics: metricsResult.data,
+      historicalData: historicalResult.data,
+      sources: {
+        stockData: stockResult.source,
+        metrics: metricsResult.source,
+        historicalData: historicalResult.source,
+      },
+    };
+  }
 }
 
 function validateStockData(data: StockData): boolean {
@@ -143,4 +259,19 @@ function validateFinancialMetrics(data: FinancialMetrics): boolean {
   ).length;
 
   return validMetrics >= 3;
+}
+
+// Validation function for historical data
+function validateHistoricalData(data: HistoricalData): boolean {
+  return (
+    data.symbol !== undefined &&
+    data.data.length > 0 &&
+    data.data.every(
+      (point) =>
+        point.date !== undefined &&
+        point.close > 0 &&
+        !isNaN(point.close) &&
+        point.volume >= 0
+    )
+  );
 }

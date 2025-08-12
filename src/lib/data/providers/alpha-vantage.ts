@@ -1,5 +1,10 @@
 import axios from "axios";
 import type { StockData, FinancialMetrics } from "@/types";
+import type {
+  HistoricalData,
+  HistoricalDataPoint,
+  TechnicalIndicators,
+} from "@/types";
 
 export class AlphaVantageProvider {
   name = "Alpha Vantage";
@@ -225,5 +230,218 @@ export class AlphaVantageProvider {
 
     // Registrar este request
     AlphaVantageProvider.requestTimes.push(now);
+  }
+
+  async getHistoricalData(
+    ticker: string,
+    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
+  ): Promise<HistoricalData> {
+    if (!this.apiKey) {
+      throw new Error("Alpha Vantage API key not configured");
+    }
+
+    try {
+      console.log(
+        `📈 Alpha Vantage: Fetching historical data for ${ticker} (${timeframe})`
+      );
+
+      // For longer timeframes, use weekly data to reduce API calls
+      const functionType = ["2Y", "5Y"].includes(timeframe)
+        ? "TIME_SERIES_WEEKLY"
+        : "TIME_SERIES_DAILY";
+      const outputSize = timeframe === "1M" ? "compact" : "full";
+
+      const response = await axios.get(this.baseUrl, {
+        params: {
+          function: functionType,
+          symbol: ticker,
+          outputsize: outputSize,
+          apikey: this.apiKey,
+        },
+        timeout: 15000,
+      });
+
+      const data = response.data;
+
+      if (data["Error Message"]) {
+        throw new Error(data["Error Message"]);
+      }
+
+      if (data["Note"]) {
+        throw new Error("API rate limit exceeded");
+      }
+
+      // Get the time series data
+      const timeSeriesKey =
+        functionType === "TIME_SERIES_WEEKLY"
+          ? "Weekly Time Series"
+          : "Time Series (Daily)";
+
+      const timeSeries = data[timeSeriesKey];
+
+      if (!timeSeries) {
+        throw new Error(`No historical data found for ${ticker}`);
+      }
+
+      // Convert to our format and filter by timeframe
+      const historicalPoints = this.processTimeSeriesData(
+        timeSeries,
+        timeframe
+      );
+
+      return {
+        symbol: ticker,
+        timeframe,
+        data: historicalPoints,
+        lastUpdated: new Date(),
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(
+          `Alpha Vantage historical data error: ${error.message}`
+        );
+      }
+      throw error;
+    }
+  }
+
+  private processTimeSeriesData(
+    timeSeries: Record<string, any>,
+    timeframe: string
+  ): HistoricalDataPoint[] {
+    const dataPoints: HistoricalDataPoint[] = [];
+    const dates = Object.keys(timeSeries).sort(
+      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+    );
+
+    // Calculate cutoff date based on timeframe
+    const now = new Date();
+    const cutoffDate = new Date(now);
+
+    switch (timeframe) {
+      case "1M":
+        cutoffDate.setMonth(now.getMonth() - 1);
+        break;
+      case "3M":
+        cutoffDate.setMonth(now.getMonth() - 3);
+        break;
+      case "6M":
+        cutoffDate.setMonth(now.getMonth() - 6);
+        break;
+      case "1Y":
+        cutoffDate.setFullYear(now.getFullYear() - 1);
+        break;
+      case "2Y":
+        cutoffDate.setFullYear(now.getFullYear() - 2);
+        break;
+      case "5Y":
+        cutoffDate.setFullYear(now.getFullYear() - 5);
+        break;
+    }
+
+    // Filter and process data
+    for (const date of dates) {
+      const dateObj = new Date(date);
+      if (dateObj >= cutoffDate) {
+        const dayData = timeSeries[date];
+
+        dataPoints.push({
+          date,
+          open: parseFloat(dayData["1. open"]),
+          high: parseFloat(dayData["2. high"]),
+          low: parseFloat(dayData["3. low"]),
+          close: parseFloat(dayData["4. close"]),
+          volume: parseInt(dayData["5. volume"]) || 0,
+        });
+      }
+    }
+
+    return dataPoints;
+  }
+
+  // Technical indicators calculation
+  calculateTechnicalIndicators(
+    data: HistoricalDataPoint[]
+  ): HistoricalDataPoint[] {
+    if (data.length < 50) return data; // Need enough data for indicators
+
+    return data.map((point, index) => {
+      const indicators: TechnicalIndicators = {
+        sma20: this.calculateSMA(data, index, 20),
+        sma50: this.calculateSMA(data, index, 50),
+        ema12: this.calculateEMA(data, index, 12),
+        ema26: this.calculateEMA(data, index, 26),
+        rsi: this.calculateRSI(data, index, 14),
+      };
+
+      return {
+        ...point,
+        indicators,
+      };
+    });
+  }
+
+  private calculateSMA(
+    data: HistoricalDataPoint[],
+    currentIndex: number,
+    period: number
+  ): number | null {
+    if (currentIndex < period - 1) return null;
+
+    const sum = data
+      .slice(currentIndex - period + 1, currentIndex + 1)
+      .reduce((acc, point) => acc + point.close, 0);
+
+    return sum / period;
+  }
+
+  private calculateEMA(
+    data: HistoricalDataPoint[],
+    currentIndex: number,
+    period: number
+  ): number | null {
+    if (currentIndex < period - 1) return null;
+
+    const multiplier = 2 / (period + 1);
+
+    if (currentIndex === period - 1) {
+      // First EMA is SMA
+      return this.calculateSMA(data, currentIndex, period);
+    }
+
+    const previousEMA = this.calculateEMA(data, currentIndex - 1, period);
+    if (previousEMA === null) return null;
+
+    return (
+      data[currentIndex].close * multiplier + previousEMA * (1 - multiplier)
+    );
+  }
+
+  private calculateRSI(
+    data: HistoricalDataPoint[],
+    currentIndex: number,
+    period: number
+  ): number | null {
+    if (currentIndex < period) return null;
+
+    let gains = 0;
+    let losses = 0;
+
+    for (let i = currentIndex - period + 1; i <= currentIndex; i++) {
+      const change = data[i].close - data[i - 1].close;
+      if (change > 0) {
+        gains += change;
+      } else {
+        losses += Math.abs(change);
+      }
+    }
+
+    const avgGain = gains / period;
+    const avgLoss = losses / period;
+
+    if (avgLoss === 0) return 100;
+
+    const rs = avgGain / avgLoss;
+    return 100 - 100 / (1 + rs);
   }
 }
