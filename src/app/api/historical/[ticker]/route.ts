@@ -7,13 +7,16 @@ const timeframeSchema = z.enum(["1M", "3M", "6M", "1Y", "2Y", "5Y"]).optional();
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { ticker: string } }
+  { params }: { params: Promise<{ ticker: string }> }
 ) {
   const startTime = Date.now();
 
   try {
+    // Await params in Next.js 14+
+    const { ticker: rawTicker } = await params;
+
     // Validate ticker
-    const ticker = tickerSchema.parse(params.ticker.toUpperCase());
+    const ticker = tickerSchema.parse(rawTicker.toUpperCase());
 
     // Get timeframe from query params
     const { searchParams } = new URL(request.url);
@@ -69,8 +72,17 @@ export async function GET(
     });
   } catch (error) {
     const processingTime = Date.now() - startTime;
+
+    let errorTicker = "unknown";
+    try {
+      const { ticker } = await params;
+      errorTicker = ticker;
+    } catch {
+      // If params can't be accessed, use "unknown"
+    }
+
     console.error(
-      `❌ Historical data error for ${params.ticker} (${processingTime}ms):`,
+      `❌ Historical data error for ${errorTicker} (${processingTime}ms):`,
       error
     );
 

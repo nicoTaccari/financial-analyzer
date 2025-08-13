@@ -9,13 +9,16 @@ const tickerSchema = z.string().regex(/^[A-Z]{1,5}$/, "Invalid ticker format");
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { ticker: string } }
-) {
+  { params }: { params: Promise<{ ticker: string }> }
+): Promise<NextResponse> {
   const startTime = Date.now();
 
   try {
+    // Await params in Next.js 14+
+    const { ticker: rawTicker } = await params;
+
     // Validar ticker
-    const ticker = tickerSchema.parse(params.ticker.toUpperCase());
+    const ticker = tickerSchema.parse(rawTicker.toUpperCase());
 
     console.log(`🔍 Starting analysis for ${ticker}`);
 
@@ -31,7 +34,6 @@ export async function GET(
     const { score } = MetricsEngine.calculateAll(metrics);
 
     // 3. Generar análisis IA
-    debugger;
     const aiAnalysis = await AIAnalyzer.analyze(
       ticker,
       metrics,
@@ -53,7 +55,7 @@ export async function GET(
       timestamp: new Date(),
       sources,
       processingTime: Date.now() - startTime,
-      aiProvider: process.env.GROQ_API_KEY ? "Groq Llama 3.1" : "Enhanced Mock", // ← AGREGAR
+      aiProvider: process.env.GROQ_API_KEY ? "Groq Llama 3.1" : "Enhanced Mock",
     };
 
     console.log(
@@ -68,8 +70,18 @@ export async function GET(
     });
   } catch (error) {
     const processingTime = Date.now() - startTime;
+
+    // Since params is awaited above, we need to handle the ticker differently in error cases
+    let errorTicker = "unknown";
+    try {
+      const { ticker } = await params;
+      errorTicker = ticker;
+    } catch {
+      // If params can't be accessed, use "unknown"
+    }
+
     console.error(
-      `❌ Analysis error for ${params.ticker} (${processingTime}ms):`,
+      `❌ Analysis error for ${errorTicker} (${processingTime}ms):`,
       error
     );
 

@@ -306,7 +306,7 @@ export class AlphaVantageProvider {
   }
 
   private processTimeSeriesData(
-    timeSeries: Record<string, any>,
+    timeSeries: Record<string, unknown>,
     timeframe: string
   ): HistoricalDataPoint[] {
     const dataPoints: HistoricalDataPoint[] = [];
@@ -343,7 +343,9 @@ export class AlphaVantageProvider {
     for (const date of dates) {
       const dateObj = new Date(date);
       if (dateObj >= cutoffDate) {
-        const dayData = timeSeries[date];
+        const dayData = timeSeries[date] as {
+          [key: string]: string;
+        };
 
         dataPoints.push({
           date,

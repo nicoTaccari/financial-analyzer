@@ -67,7 +67,8 @@ export const getCachedHistoricalData = unstable_cache(
       );
       console.log(`✅ Using mock historical data for ${ticker}`);
       return { data, source: "Mock Provider" };
-    } catch (mockError) {
+    } catch (error) {
+      console.log(error);
       throw new Error(
         `All historical data providers failed for ${ticker}. Errors: ${errors.join(
           "; "

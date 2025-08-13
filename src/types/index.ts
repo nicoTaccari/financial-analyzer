@@ -54,6 +54,7 @@ export interface AIAnalysis {
 }
 
 export interface AnalysisResult {
+  [x: string]: unknown;
   ticker: string;
   stockData: StockData;
   metrics: FinancialMetrics;
