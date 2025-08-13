@@ -1,4 +1,3 @@
-// src/hooks/useStockAnalysis.ts
 import { useState, useCallback } from "react";
 import type { AnalysisResult } from "@/types";
 

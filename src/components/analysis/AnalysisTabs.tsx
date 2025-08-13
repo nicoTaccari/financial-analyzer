@@ -1,4 +1,3 @@
-// src/components/analysis/AnalysisTabs.tsx
 import { useState } from "react";
 import { BarChart3, DollarSign, LineChart, Activity } from "lucide-react";
 import { ScoreOverview } from "./tabs/ScoreOverview";

@@ -1,4 +1,3 @@
-// src/components/ui/LoadingState.tsx
 import { BarChart3 } from "lucide-react";
 
 interface LoadingStateProps {

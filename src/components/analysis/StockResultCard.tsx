@@ -1,4 +1,3 @@
-// src/components/analysis/StockResultCard.tsx
 import {
   TrendingUp,
   TrendingDown,

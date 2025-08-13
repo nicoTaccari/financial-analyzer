@@ -1,4 +1,3 @@
-// src/app/api/historical/[ticker]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { FinancialDataAggregator } from "@/lib/data/aggregator";

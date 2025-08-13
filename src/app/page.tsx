@@ -1,4 +1,3 @@
-// src/app/page.tsx - Refactored version
 "use client";
 
 import { AnalysisTabs } from "@/components/analysis/AnalysisTabs";
@@ -16,7 +15,6 @@ import { useWatchlist } from "@/hooks/useWatchlist";
 import { useCallback } from "react";
 
 export default function Home() {
-  // Custom hooks for state management
   const { result, loading, error, analyzeStock, clearAnalysis } =
     useStockAnalysis();
   const {

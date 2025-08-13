@@ -1,4 +1,3 @@
-// src/components/search/SearchSection.tsx
 import { useState } from "react";
 import { Search } from "lucide-react";
 

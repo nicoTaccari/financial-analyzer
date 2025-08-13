@@ -1,4 +1,3 @@
-// src/components/layout/Header.tsx
 import { BarChart3, Target, Activity } from "lucide-react";
 
 interface HeaderProps {

@@ -1,4 +1,3 @@
-// src/components/layout/Footer.tsx
 export function Footer() {
   return (
     <footer className="mt-20 text-center">

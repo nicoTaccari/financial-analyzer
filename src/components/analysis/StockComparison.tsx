@@ -1,4 +1,3 @@
-// src/components/analysis/StockComparison.tsx
 import { BarChart3 } from "lucide-react";
 import { formatNumber, formatPercentage } from "@/lib/utils";
 import type { AnalysisResult } from "@/types";

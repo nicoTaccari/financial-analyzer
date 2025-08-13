@@ -1,4 +1,3 @@
-// Create this file: src/components/charts/StockChart.tsx
 "use client";
 
 import { useState, useMemo } from "react";
