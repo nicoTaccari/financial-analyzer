@@ -79,7 +79,7 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error: error.errors[0]?.message || "Invalid request parameters",
+          error: error.issues[0]?.message || "Invalid request parameters",
         },
         { status: 400 }
       );
