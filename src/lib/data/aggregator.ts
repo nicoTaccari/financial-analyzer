@@ -1,33 +1,153 @@
+// src/lib/data/aggregator-optimized.ts
 import { unstable_cache } from "next/cache";
 import { AlphaVantageProvider } from "./providers/alpha-vantage";
 import { MockFinancialProvider } from "./providers/mock-provider";
 import type { StockData, FinancialMetrics } from "@/types";
 import type { HistoricalData } from "@/types";
 
-// Providers en orden de preferencia
+// Optimized providers with reduced delays
 const stockProviders = [
   new AlphaVantageProvider(),
-  new MockFinancialProvider(), // Fallback final
+  new MockFinancialProvider(),
 ];
 
-const metricsProviders = [
-  new AlphaVantageProvider(),
-  new MockFinancialProvider(), // Yahoo no tiene métricas completas
-];
+// In-memory cache for very recent requests (last 60 seconds)
+const memoryCache = new Map<
+  string,
+  { data: any; timestamp: number; ttl: number }
+>();
+
+function setMemoryCache(key: string, data: any, ttlMs = 60000) {
+  memoryCache.set(key, { data, timestamp: Date.now(), ttl: ttlMs });
+}
+
+function getMemoryCache(key: string) {
+  const cached = memoryCache.get(key);
+  if (cached && Date.now() - cached.timestamp < cached.ttl) {
+    return cached.data;
+  }
+  memoryCache.delete(key);
+  return null;
+}
+
+// Optimized cache with shorter revalidation for faster responses
+export const getCachedStockData = unstable_cache(
+  async (ticker: string): Promise<{ data: StockData; source: string }> => {
+    // Check memory cache first
+    const cacheKey = `stock-${ticker}`;
+    const cached = getMemoryCache(cacheKey);
+    if (cached) {
+      console.log(`💾 Memory cache hit for ${ticker} stock data`);
+      return cached;
+    }
+
+    console.log(`🔍 Fetching fresh stock data for ${ticker}`);
+    const errors: string[] = [];
+
+    for (const provider of stockProviders) {
+      try {
+        const data = await provider.getStockData(ticker);
+
+        if (validateStockData(data)) {
+          console.log(`✅ Success with ${provider.name} for ${ticker}`);
+          const result = { data, source: provider.name };
+          setMemoryCache(cacheKey, result, 60000); // 1 minute memory cache
+          return result;
+        }
+      } catch (error) {
+        const errorMsg =
+          error instanceof Error ? error.message : "Unknown error";
+        console.warn(`❌ ${provider.name} failed for ${ticker}: ${errorMsg}`);
+        errors.push(`${provider.name}: ${errorMsg}`);
+
+        // Reduced wait time for rate limits
+        if (errorMsg.includes("rate limit")) {
+          console.log(`⏳ Rate limit detected, waiting 1 second...`);
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Reduced from 2000ms
+        }
+      }
+    }
+
+    throw new Error(
+      `All providers failed for ${ticker}. Errors: ${errors.join("; ")}`
+    );
+  },
+  ["stock-data-optimized"],
+  {
+    revalidate: 120, // Reduced from 300 to 2 minutes
+    tags: ["stocks"],
+  }
+);
+
+export const getCachedFinancialMetrics = unstable_cache(
+  async (
+    ticker: string
+  ): Promise<{ data: FinancialMetrics; source: string }> => {
+    // Check memory cache first
+    const cacheKey = `metrics-${ticker}`;
+    const cached = getMemoryCache(cacheKey);
+    if (cached) {
+      console.log(`💾 Memory cache hit for ${ticker} metrics`);
+      return cached;
+    }
+
+    console.log(`📊 Fetching fresh metrics for ${ticker}`);
+    const errors: string[] = [];
+
+    for (const provider of stockProviders) {
+      try {
+        const data = await provider.getFinancialMetrics(ticker);
+
+        if (validateFinancialMetrics(data)) {
+          console.log(`✅ Metrics success with ${provider.name} for ${ticker}`);
+          const result = { data, source: provider.name };
+          setMemoryCache(cacheKey, result, 300000); // 5 minute memory cache for metrics
+          return result;
+        }
+      } catch (error) {
+        const errorMsg =
+          error instanceof Error ? error.message : "Unknown error";
+        console.warn(
+          `❌ ${provider.name} metrics failed for ${ticker}: ${errorMsg}`
+        );
+        errors.push(`${provider.name}: ${errorMsg}`);
+
+        // Reduced wait time
+        if (errorMsg.includes("rate limit")) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    }
+
+    throw new Error(
+      `All metrics providers failed for ${ticker}. Errors: ${errors.join("; ")}`
+    );
+  },
+  ["financial-metrics-optimized"],
+  {
+    revalidate: 300, // Reduced from 600 to 5 minutes
+    tags: ["metrics"],
+  }
+);
 
 export const getCachedHistoricalData = unstable_cache(
   async (
     ticker: string,
     timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
   ): Promise<{ data: HistoricalData; source: string }> => {
+    const cacheKey = `historical-${ticker}-${timeframe}`;
+    const cached = getMemoryCache(cacheKey);
+    if (cached) {
+      console.log(`💾 Memory cache hit for ${ticker} historical data`);
+      return cached;
+    }
+
     console.log(
       `📈 Fetching fresh historical data for ${ticker} (${timeframe})`
     );
-
     const errors: string[] = [];
 
     for (const provider of stockProviders) {
-      // Only Alpha Vantage supports historical data for now
       if (provider.name !== "Alpha Vantage") continue;
 
       try {
@@ -41,7 +161,9 @@ export const getCachedHistoricalData = unstable_cache(
             console.log(
               `✅ Historical data success with ${provider.name} for ${ticker}`
             );
-            return { data, source: provider.name };
+            const result = { data, source: provider.name };
+            setMemoryCache(cacheKey, result, 600000); // 10 minute memory cache
+            return result;
           }
         }
       } catch (error) {
@@ -53,12 +175,12 @@ export const getCachedHistoricalData = unstable_cache(
         errors.push(`${provider.name}: ${errorMsg}`);
 
         if (errorMsg.includes("rate limit")) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
     }
 
-    // Fallback to mock data if all providers fail
+    // Fallback to mock with reduced delay
     try {
       const mockProvider = new MockFinancialProvider();
       const data = await (mockProvider as any).getHistoricalData(
@@ -66,9 +188,10 @@ export const getCachedHistoricalData = unstable_cache(
         timeframe
       );
       console.log(`✅ Using mock historical data for ${ticker}`);
-      return { data, source: "Mock Provider" };
+      const result = { data, source: "Mock Provider" };
+      setMemoryCache(cacheKey, result, 300000); // 5 minute cache for mock data
+      return result;
     } catch (error) {
-      console.log(error);
       throw new Error(
         `All historical data providers failed for ${ticker}. Errors: ${errors.join(
           "; "
@@ -76,173 +199,113 @@ export const getCachedHistoricalData = unstable_cache(
       );
     }
   },
-  ["historical-data"],
+  ["historical-data-optimized"],
   {
-    revalidate: 1800, // 30 minutes for historical data
+    revalidate: 900, // Reduced from 1800 to 15 minutes
     tags: ["historical"],
   }
 );
 
-// Cache con Next.js
-export const getCachedStockData = unstable_cache(
-  async (ticker: string): Promise<{ data: StockData; source: string }> => {
-    console.log(`🔍 Fetching fresh stock data for ${ticker}`);
-
-    const errors: string[] = [];
-
-    for (const provider of stockProviders) {
-      try {
-        const data = await provider.getStockData(ticker);
-
-        if (validateStockData(data)) {
-          console.log(`✅ Success with ${provider.name} for ${ticker}`);
-          return { data, source: provider.name };
-        }
-      } catch (error) {
-        const errorMsg =
-          error instanceof Error ? error.message : "Unknown error";
-        console.warn(`❌ ${provider.name} failed for ${ticker}: ${errorMsg}`);
-        errors.push(`${provider.name}: ${errorMsg}`);
-
-        // Si es rate limit, esperar un poco antes del siguiente provider
-        if (
-          errorMsg.includes("rate limit") ||
-          errorMsg.includes("API call frequency")
-        ) {
-          console.log(`⏳ Rate limit detected, waiting 2 seconds...`);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      }
-    }
-
-    throw new Error(
-      `All providers failed for ${ticker}. Errors: ${errors.join("; ")}`
-    );
-  },
-  ["stock-data"],
-  {
-    revalidate: 300, // 5 minutos
-    tags: ["stocks"],
-  }
-);
-
-export const getCachedFinancialMetrics = unstable_cache(
-  async (
-    ticker: string
-  ): Promise<{ data: FinancialMetrics; source: string }> => {
-    console.log(`📊 Fetching fresh metrics for ${ticker}`);
-
-    const errors: string[] = [];
-
-    for (const provider of metricsProviders) {
-      try {
-        const data = await provider.getFinancialMetrics(ticker);
-
-        if (validateFinancialMetrics(data)) {
-          console.log(`✅ Metrics success with ${provider.name} for ${ticker}`);
-          return { data, source: provider.name };
-        }
-      } catch (error) {
-        const errorMsg =
-          error instanceof Error ? error.message : "Unknown error";
-        console.warn(
-          `❌ ${provider.name} metrics failed for ${ticker}: ${errorMsg}`
-        );
-        errors.push(`${provider.name}: ${errorMsg}`);
-
-        if (errorMsg.includes("rate limit")) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      }
-    }
-
-    throw new Error(
-      `All metrics providers failed for ${ticker}. Errors: ${errors.join("; ")}`
-    );
-  },
-  ["financial-metrics"],
-  {
-    revalidate: 600, // 10 minutos
-    tags: ["metrics"],
-  }
-);
-
 export class FinancialDataAggregator {
-  static async getStockData(ticker: string): Promise<StockData> {
-    const result = await getCachedStockData(ticker.toUpperCase());
-    return result.data;
-  }
-
-  static async getFinancialMetrics(ticker: string): Promise<FinancialMetrics> {
-    const result = await getCachedFinancialMetrics(ticker.toUpperCase());
-    return result.data;
-  }
-
+  // Fast method that returns data as soon as available
   static async getDataWithSources(ticker: string) {
-    const [stockResult, metricsResult] = await Promise.all([
-      getCachedStockData(ticker.toUpperCase()),
-      getCachedFinancialMetrics(ticker.toUpperCase()),
+    const tickerUpper = ticker.toUpperCase();
+
+    console.log(`🚀 Starting parallel data fetch for ${tickerUpper}`);
+
+    // Execute in parallel with timeout
+    const dataPromises = Promise.allSettled([
+      Promise.race([
+        getCachedStockData(tickerUpper),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Stock data timeout")), 8000)
+        ),
+      ]),
+      Promise.race([
+        getCachedFinancialMetrics(tickerUpper),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Metrics timeout")), 10000)
+        ),
+      ]),
     ]);
 
+    const [stockResult, metricsResult] = await dataPromises;
+
+    // Handle stock data
+    let stockData, stockSource;
+    if (stockResult.status === "fulfilled") {
+      stockData = stockResult.value.data;
+      stockSource = stockResult.value.source;
+    } else {
+      console.warn(`⚠️ Stock data failed, using mock for ${tickerUpper}`);
+      const mockProvider = new MockFinancialProvider();
+      stockData = await mockProvider.getStockData(tickerUpper);
+      stockSource = "Mock Provider (Fallback)";
+    }
+
+    // Handle metrics data
+    let metrics, metricsSource;
+    if (metricsResult.status === "fulfilled") {
+      metrics = metricsResult.value.data;
+      metricsSource = metricsResult.value.source;
+    } else {
+      console.warn(`⚠️ Metrics failed, using mock for ${tickerUpper}`);
+      const mockProvider = new MockFinancialProvider();
+      metrics = await mockProvider.getFinancialMetrics(tickerUpper);
+      metricsSource = "Mock Provider (Fallback)";
+    }
+
     return {
-      stockData: stockResult.data,
-      metrics: metricsResult.data,
+      stockData,
+      metrics,
       sources: {
-        stockData: stockResult.source,
-        metrics: metricsResult.source,
+        stockData: stockSource,
+        metrics: metricsSource,
       },
     };
   }
 
-  static async getHistoricalData(
-    ticker: string,
-    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
-  ): Promise<HistoricalData> {
-    const result = await getCachedHistoricalData(
-      ticker.toUpperCase(),
-      timeframe
-    );
-    return result.data;
+  // Background prefetch for popular stocks
+  static async prefetchPopularStocks(tickers: string[]) {
+    console.log(`🔄 Background prefetching for: ${tickers.join(", ")}`);
+
+    // Don't await, just start the prefetch
+    tickers.forEach(async (ticker) => {
+      try {
+        await this.getDataWithSources(ticker);
+      } catch (error) {
+        console.log(`Background prefetch failed for ${ticker}:`, error);
+      }
+    });
   }
 
+  // Batch method for multiple tickers
+  static async getBatchData(tickers: string[]) {
+    const results = await Promise.allSettled(
+      tickers.map((ticker) => this.getDataWithSources(ticker))
+    );
+
+    return results.reduce((acc, result, index) => {
+      const ticker = tickers[index];
+      if (result.status === "fulfilled") {
+        acc[ticker] = result.value;
+      } else {
+        console.warn(`Batch fetch failed for ${ticker}:`, result.reason);
+      }
+      return acc;
+    }, {} as Record<string, any>);
+  }
+
+  // Legacy methods for compatibility
   static async getHistoricalDataWithSource(
     ticker: string,
     timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
   ) {
-    const result = await getCachedHistoricalData(
-      ticker.toUpperCase(),
-      timeframe
-    );
-    return {
-      data: result.data,
-      source: result.source,
-    };
-  }
-
-  // Enhanced method that includes historical data
-  static async getCompleteAnalysisData(
-    ticker: string,
-    timeframe: "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" = "1Y"
-  ) {
-    const [stockResult, metricsResult, historicalResult] = await Promise.all([
-      getCachedStockData(ticker.toUpperCase()),
-      getCachedFinancialMetrics(ticker.toUpperCase()),
-      getCachedHistoricalData(ticker.toUpperCase(), timeframe),
-    ]);
-
-    return {
-      stockData: stockResult.data,
-      metrics: metricsResult.data,
-      historicalData: historicalResult.data,
-      sources: {
-        stockData: stockResult.source,
-        metrics: metricsResult.source,
-        historicalData: historicalResult.source,
-      },
-    };
+    return await getCachedHistoricalData(ticker.toUpperCase(), timeframe);
   }
 }
 
+// Validation functions (same as before)
 function validateStockData(data: StockData): boolean {
   return (
     data.symbol !== undefined &&
@@ -254,15 +317,12 @@ function validateStockData(data: StockData): boolean {
 }
 
 function validateFinancialMetrics(data: FinancialMetrics): boolean {
-  // Al menos 3 métricas deben tener valores válidos
   const validMetrics = Object.values(data).filter(
     (value) => value !== null && value !== undefined && !isNaN(value as number)
   ).length;
-
   return validMetrics >= 3;
 }
 
-// Validation function for historical data
 function validateHistoricalData(data: HistoricalData): boolean {
   return (
     data.symbol !== undefined &&

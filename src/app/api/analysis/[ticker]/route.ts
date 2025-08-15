@@ -1,9 +1,11 @@
+// src/app/api/analysis/[ticker]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { FinancialDataAggregator } from "@/lib/data/aggregator";
+
 import { MetricsEngine } from "@/lib/metrics";
 import { AIAnalyzer } from "@/lib/ai/analyzer";
 import type { AnalysisResult } from "@/types";
+import { FinancialDataAggregator } from "@/lib/data/aggregator";
 
 const tickerSchema = z.string().regex(/^[A-Z]{1,5}$/, "Invalid ticker format");
 
@@ -14,34 +16,69 @@ export async function GET(
   const startTime = Date.now();
 
   try {
-    // Await params in Next.js 14+
     const { ticker: rawTicker } = await params;
-
-    // Validar ticker
     const ticker = tickerSchema.parse(rawTicker.toUpperCase());
 
-    console.log(`🔍 Starting analysis for ${ticker}`);
+    console.log(`🔍 Starting optimized analysis for ${ticker}`);
 
-    // 1. Obtener datos con sources info
+    // Strategy 1: Return basic data first, stream AI analysis
+    const { searchParams } = new URL(request.url);
+    const skipAI = searchParams.get("skipAI") === "true";
+
+    // Strategy 2: Get data with faster fallback
     const { stockData, metrics, sources } =
       await FinancialDataAggregator.getDataWithSources(ticker);
 
-    console.log(
-      `📊 Data sources - Stock: ${sources.stockData}, Metrics: ${sources.metrics}`
-    );
-
-    // 2. Calcular score
+    // Strategy 3: Calculate score immediately (fast operation)
     const { score } = MetricsEngine.calculateAll(metrics);
 
-    // 3. Generar análisis IA
-    const aiAnalysis = await AIAnalyzer.analyze(
-      ticker,
-      metrics,
-      score,
-      stockData.price
-    );
+    // Strategy 4: Return early response without AI if requested
+    if (skipAI) {
+      const basicResult = {
+        ticker,
+        stockData,
+        metrics,
+        score,
+        aiAnalysis: {
+          summary: "AI analysis loading...",
+          strengths: ["Analysis in progress"],
+          weaknesses: ["Analysis in progress"],
+          keyRisks: ["Analysis in progress"],
+          catalysts: ["Analysis in progress"],
+          recommendationReasoning:
+            "Detailed AI analysis will be available shortly",
+        },
+        timestamp: new Date(),
+        sources,
+        processingTime: Date.now() - startTime,
+        aiProvider: "Loading",
+        isPartial: true,
+      };
 
-    // 4. Construir resultado
+      return NextResponse.json({
+        success: true,
+        data: basicResult,
+      });
+    }
+
+    // Strategy 5: Parallel AI analysis with timeout
+    const aiAnalysisPromise = Promise.race([
+      AIAnalyzer.analyze(ticker, metrics, score, stockData.price),
+      new Promise<any>((_, reject) =>
+        setTimeout(() => reject(new Error("AI analysis timeout")), 15000)
+      ),
+    ]);
+
+    let aiAnalysis;
+    try {
+      aiAnalysis = await aiAnalysisPromise;
+    } catch (error) {
+      console.warn(
+        `⚠️ AI analysis failed/timeout for ${ticker}, using fallback`
+      );
+      aiAnalysis = generateFallbackAnalysis(ticker, metrics, score);
+    }
+
     const result: AnalysisResult & {
       sources: typeof sources;
       processingTime: number;
@@ -59,7 +96,7 @@ export async function GET(
     };
 
     console.log(
-      `✅ Analysis completed for ${ticker} - Score: ${score.overall.toFixed(
+      `✅ Optimized analysis completed for ${ticker} - Score: ${score.overall.toFixed(
         0
       )}/100 - Time: ${result.processingTime}ms`
     );
@@ -70,9 +107,8 @@ export async function GET(
     });
   } catch (error) {
     const processingTime = Date.now() - startTime;
-
-    // Since params is awaited above, we need to handle the ticker differently in error cases
     let errorTicker = "unknown";
+
     try {
       const { ticker } = await params;
       errorTicker = ticker;
@@ -104,4 +140,46 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+function generateFallbackAnalysis(ticker: string, metrics: any, score: any) {
+  return {
+    summary: `${ticker} shows ${
+      score.recommendation
+    } signals with overall score of ${score.overall.toFixed(
+      0
+    )}/100. This is a fallback analysis.`,
+    strengths: [
+      score.breakdown.profitability > 60
+        ? "Solid profitability metrics"
+        : "Stable business operations",
+      score.breakdown.financialHealth > 60
+        ? "Strong balance sheet"
+        : "Adequate financial position",
+    ],
+    weaknesses: [
+      score.breakdown.valuation < 50
+        ? "Premium valuation levels"
+        : "Market volatility concerns",
+    ],
+    keyRisks: [
+      "Market volatility",
+      "Sector-specific risks",
+      "Economic uncertainty",
+    ],
+    catalysts: [
+      "Upcoming earnings report",
+      "Industry developments",
+      "Market expansion opportunities",
+    ],
+    recommendationReasoning: `Based on quantitative analysis, ${ticker} receives a ${
+      score.recommendation
+    } recommendation with ${score.overall.toFixed(
+      0
+    )}/100 overall score. Key metrics include profitability score of ${score.breakdown.profitability.toFixed(
+      0
+    )} and financial health score of ${score.breakdown.financialHealth.toFixed(
+      0
+    )}.`,
+  };
 }

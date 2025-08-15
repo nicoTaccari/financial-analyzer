@@ -1,5 +1,7 @@
+// src/app/page-optimized.tsx
 "use client";
 
+import { useEffect, useCallback } from "react";
 import { AnalysisTabs } from "@/components/analysis/AnalysisTabs";
 import { StockComparison } from "@/components/analysis/StockComparison";
 import { StockResultCard } from "@/components/analysis/StockResultCard";
@@ -10,13 +12,25 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useComparison } from "@/hooks/useComparison";
 import { useHistoricalData } from "@/hooks/useHistoricalData";
-import { useStockAnalysis } from "@/hooks/useStockAnalysis";
+
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { useCallback } from "react";
+import { useStockAnalysis } from "@/hooks/useStockAnalysis";
+
+// Popular stocks for prefetching
+const POPULAR_STOCKS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "NVDA"];
 
 export default function Home() {
-  const { result, loading, error, analyzeStock, clearAnalysis } =
-    useStockAnalysis();
+  const {
+    result,
+    loading,
+    error,
+    isPartial,
+    aiLoading,
+    analyzeStock,
+    clearAnalysis,
+    prefetchAnalysis,
+  } = useStockAnalysis();
+
   const {
     historicalData,
     chartLoading,
@@ -25,26 +39,47 @@ export default function Home() {
     fetchHistoricalData,
     clearHistoricalData,
   } = useHistoricalData();
+
   const { watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist } =
     useWatchlist();
   const { comparison, addToComparison, clearComparison, isInComparison } =
     useComparison();
 
-  // Combined analyze function that handles both stock analysis and historical data
+  // Prefetch popular stocks on mount
+  useEffect(() => {
+    const prefetchPopular = async () => {
+      // Prefetch after a short delay to not block initial render
+      setTimeout(() => {
+        POPULAR_STOCKS.forEach((ticker) => {
+          prefetchAnalysis(ticker);
+        });
+      }, 2000);
+    };
+
+    prefetchPopular();
+  }, [prefetchAnalysis]);
+
+  // Optimized analyze function with progressive loading
   const handleAnalyze = useCallback(
     async (ticker: string) => {
       if (!ticker.trim()) return;
+
+      console.log(`🎯 Starting optimized analysis for ${ticker}`);
 
       // Clear previous data
       clearAnalysis();
       clearHistoricalData();
 
-      // Start both analyses in parallel
+      // Start stock analysis (this will now return basic data quickly)
       const analysisPromise = analyzeStock(ticker);
-      const historyPromise = fetchHistoricalData(ticker, selectedTimeframe);
 
-      // Wait for both to complete
-      await Promise.all([analysisPromise, historyPromise]);
+      // Start historical data fetch in parallel but don't wait for it
+      setTimeout(() => {
+        fetchHistoricalData(ticker, selectedTimeframe);
+      }, 500); // Small delay to prioritize main analysis
+
+      // Wait for basic analysis (should be fast)
+      await analysisPromise;
     },
     [
       analyzeStock,
@@ -94,33 +129,46 @@ export default function Home() {
           onRemoveFromWatchlist={removeFromWatchlist}
         />
 
-        {/* Loading State */}
-        {loading && <LoadingState ticker={result?.ticker || ""} />}
+        {/* Loading State - Show only for initial load */}
+        {loading && !result && <LoadingState ticker={""} />}
 
         {/* Error State */}
-        {error && (
+        {error && !result && (
           <ErrorState error={error} onDismiss={() => clearAnalysis()} />
         )}
 
-        {/* Results Section */}
+        {/* Results Section with Progressive Loading */}
         {result && (
           <div className="space-y-8">
-            {/* Stock Result Card */}
-            <StockResultCard
-              result={result}
-              isInWatchlist={isInWatchlist(result.ticker)}
-              isInComparison={isInComparison(result.ticker)}
-              onAddToWatchlist={handleAddToWatchlist}
-              onAddToComparison={handleAddToComparison}
-            />
+            {/* Stock Result Card with AI Loading Indicator */}
+            <div className="relative">
+              <StockResultCard
+                result={result}
+                isInWatchlist={isInWatchlist(result.ticker)}
+                isInComparison={isInComparison(result.ticker)}
+                onAddToWatchlist={handleAddToWatchlist}
+                onAddToComparison={handleAddToComparison}
+              />
 
-            {/* Analysis Tabs */}
+              {/* Progressive Loading Indicators */}
+              {isPartial && (
+                <div className="absolute top-4 right-4 bg-blue-100 text-blue-800 px-3 py-1 rounded-lg text-sm font-medium animate-pulse">
+                  {aiLoading
+                    ? "🤖 AI Analysis Loading..."
+                    : "⚡ Quick Analysis"}
+                </div>
+              )}
+            </div>
+
+            {/* Analysis Tabs with AI Loading State */}
             <AnalysisTabs
               result={result}
               historicalData={historicalData}
               chartLoading={chartLoading}
               chartError={chartError}
               onTimeframeChange={handleTimeframeChange}
+              aiLoading={aiLoading}
+              isPartial={isPartial}
             />
           </div>
         )}
